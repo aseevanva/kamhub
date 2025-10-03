@@ -1,18 +1,34 @@
-name: Apply UI (header + /mail + routes)
+name: Sync from source and apply UI
 on: workflow_dispatch
+permissions:
+  contents: write
 
 jobs:
-  apply:
+  sync_apply:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Ensure folders
+      - name: Clone source repo
+        run: |
+          set -euo pipefail
+          rm -rf source
+          git clone "https://x-access-token:${{ secrets.GH_SRC_TOKEN }}@github.com/PosPk/kamchatour-hub.git" source --depth=1
+
+      - name: Copy template files
+        run: |
+          set -euo pipefail
+          mkdir -p public api
+          rm -rf public/tg api/ai api/tg
+          cp -r source/public/tg public/
+          cp -r source/api/ai api/
+          cp -r source/api/tg api/
+          cp source/public/partner-tours.json public/ || true
+          cp source/vercel.json vercel.json
+
+      - name: Ensure /mail page
         run: |
           mkdir -p public/mail
-
-      - name: Add /mail page
-        run: |
           cat > public/mail/index.html <<'HTML'
           <!doctype html>
           <meta charset="utf-8">
@@ -29,42 +45,46 @@ jobs:
             <main style="padding:16px;display:grid;gap:12px">
               <h1 style="margin:0;font-size:22px;font-weight:800">Центр коммуникаций</h1>
               <p style="opacity:.85">Пишите нам: <a href="mailto:mail@tourhab.ru" style="color:#E6C149">mail@tourhab.ru</a></p>
-              <p style="opacity:.85">AI.Kam для быстрых ответов: <a href="/tg/ai.html" style="color:#E6C149">/tg/ai.html</a></p>
+              <p style="opacity:.85">AI.Kam: <a href="/tg/ai.html" style="color:#E6C149">/tg/ai.html</a></p>
             </main>
           </body>
           HTML
 
-      - name: Insert header with sign-in button into /tg
+      - name: Add header sign-in into /tg
         shell: bash
         run: |
+          set -euo pipefail
           f="public/tg/index.html"
-          [ -f "$f" ] || { echo "public/tg/index.html not found"; exit 1; }
-          tmp="$(mktemp)"
-          awk '
-            BEGIN{added=0}
-            /<body/{print; if(!added){print "  <div style=\"display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#000;color:#fff;position:sticky;top:0;z-index:1000;border-bottom:1px solid #222\">\n    <div style=\"display:flex;align-items:center;gap:10px\">\n      <div style=\"width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#E6C149,#A2D2FF)\"></div>\n      <b>Tourhab</b>\n    </div>\n    <a href=\"/tg/account.html\" style=\"background:#E6C149;color:#111;padding:8px 12px;border-radius:10px;text-decoration:none;font-weight:700\">Войти/Зарегистрироваться</a>\n  </div>"; added=1; next}
-            {print}
-          ' "$f" > "$tmp" && mv "$tmp" "$f"
+          if [ -f "$f" ]; then
+            tmp="$(mktemp)"
+            awk '
+              BEGIN{added=0}
+              /<body>/{print; if(!added){print "  <div style=\"display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#000;color:#fff;position:sticky;top:0;z-index:1000;border-bottom:1px solid #222\">\n    <div style=\"display:flex;align-items:center;gap:10px\">\n      <div style=\"width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#E6C149,#A2D2FF)\"></div>\n      <b>Tourhab</b>\n    </div>\n    <a href=\"/tg/account.html\" style=\"background:#E6C149;color:#111;padding:8px 12px;border-radius:10px;text-decoration:none;font-weight:700\">Войти/Зарегистрироваться</a>\n  </div>"; added=1; next}
+              {print}
+            ' "$f" > "$tmp" && mv "$tmp" "$f"
+          fi
 
-      - name: Append /mail routes to vercel.json
+      - name: Ensure /mail routes in vercel.json
         shell: bash
         run: |
-          node - <<'NODE'
-          const fs = require('fs');
-          const p = 'vercel.json';
-          if (!fs.existsSync(p)) process.exit(0);
-          const j = JSON.parse(fs.readFileSync(p,'utf8'));
-          j.routes = j.routes || [];
-          const have = (src)=> j.routes.some(r=>r.src===src);
-          if (!have('^/mail$')) j.routes.splice(j.routes.length,0,{src:'^/mail$',dest:'/public/mail/index.html'});
-          if (!have('^/mail/(.*)$')) j.routes.splice(j.routes.length,0,{src:'^/mail/(.*)$',dest:'/public/mail/$1'});
-          fs.writeFileSync(p, JSON.stringify(j,null,2));
-          NODE
+          set -euo pipefail
+          if [ -f vercel.json ]; then
+            node - <<'NODE'
+            const fs = require('fs');
+            const p = 'vercel.json';
+            const j = JSON.parse(fs.readFileSync(p,'utf8'));
+            j.routes = j.routes || [];
+            const add = (src,dest)=>{ if(!j.routes.some(r=>r.src===src)) j.routes.push({src,dest}); };
+            add('^/mail$','/public/mail/index.html');
+            add('^/mail/(.*)$','/public/mail/$1');
+            fs.writeFileSync(p, JSON.stringify(j,null,2));
+            NODE
+          fi
 
       - name: Commit & push
         run: |
           git config user.name "automation"
           git config user.email "bot@users.noreply.github.com"
           git add -A
-          git commit -m "UI: header signin + /mail page + routes" || true
+          git commit -m "Sync template + header signin + /mail routes" || true
           git push
