@@ -1,0 +1,70 @@
+name: Apply UI (header + /mail + routes)
+on: workflow_dispatch
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure folders
+        run: |
+          mkdir -p public/mail
+
+      - name: Add /mail page
+        run: |
+          cat > public/mail/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Tourhab — Mail</title>
+          <body style="margin:0;background:#000;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu">
+            <header style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #222;position:sticky;top:0;background:#000;z-index:10">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#E6C149,#A2D2FF)"></div>
+                <b>Tourhab</b>
+              </div>
+              <a href="/tg/account.html" style="background:#E6C149;color:#111;padding:8px 12px;border-radius:10px;text-decoration:none;font-weight:700">Войти/Зарегистрироваться</a>
+            </header>
+            <main style="padding:16px;display:grid;gap:12px">
+              <h1 style="margin:0;font-size:22px;font-weight:800">Центр коммуникаций</h1>
+              <p style="opacity:.85">Пишите нам: <a href="mailto:mail@tourhab.ru" style="color:#E6C149">mail@tourhab.ru</a></p>
+              <p style="opacity:.85">AI.Kam для быстрых ответов: <a href="/tg/ai.html" style="color:#E6C149">/tg/ai.html</a></p>
+            </main>
+          </body>
+          HTML
+
+      - name: Insert header with sign-in button into /tg
+        shell: bash
+        run: |
+          f="public/tg/index.html"
+          [ -f "$f" ] || { echo "public/tg/index.html not found"; exit 1; }
+          tmp="$(mktemp)"
+          awk '
+            BEGIN{added=0}
+            /<body/{print; if(!added){print "  <div style=\"display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#000;color:#fff;position:sticky;top:0;z-index:1000;border-bottom:1px solid #222\">\n    <div style=\"display:flex;align-items:center;gap:10px\">\n      <div style=\"width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#E6C149,#A2D2FF)\"></div>\n      <b>Tourhab</b>\n    </div>\n    <a href=\"/tg/account.html\" style=\"background:#E6C149;color:#111;padding:8px 12px;border-radius:10px;text-decoration:none;font-weight:700\">Войти/Зарегистрироваться</a>\n  </div>"; added=1; next}
+            {print}
+          ' "$f" > "$tmp" && mv "$tmp" "$f"
+
+      - name: Append /mail routes to vercel.json
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'vercel.json';
+          if (!fs.existsSync(p)) process.exit(0);
+          const j = JSON.parse(fs.readFileSync(p,'utf8'));
+          j.routes = j.routes || [];
+          const have = (src)=> j.routes.some(r=>r.src===src);
+          if (!have('^/mail$')) j.routes.splice(j.routes.length,0,{src:'^/mail$',dest:'/public/mail/index.html'});
+          if (!have('^/mail/(.*)$')) j.routes.splice(j.routes.length,0,{src:'^/mail/(.*)$',dest:'/public/mail/$1'});
+          fs.writeFileSync(p, JSON.stringify(j,null,2));
+          NODE
+
+      - name: Commit & push
+        run: |
+          git config user.name "automation"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A
+          git commit -m "UI: header signin + /mail page + routes" || true
+          git push
